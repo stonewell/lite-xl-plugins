@@ -45,41 +45,108 @@ function M.updateGit(spec)
 end
 
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- linkLocalSync — synchronously symlink/copy a local path into plugins/libraries
+-- ---------------------------------------------------------------------------
+function M.linkLocalSync(spec)
+  local src      = util.normPath(common.home_expand(spec.plugin))
+  local dest_dir = util.normPath(USERDIR .. (spec.library and '/libraries' or '/plugins'))
+  local name     = spec.name or util.plugName(common.basename(spec.plugin))
+  local dest     = util.normPath(util.join({dest_dir, name}))
+
+  system.mkdir(dest_dir)
+
+  if src == dest then
+    return true
+  end
+
+  if not util.fileExists(src) then
+    return false, string.format('[use-package] source does not exist: %s', src)
+  end
+
+  if PLATFORM == 'Windows' then
+    if not util.fileExists(dest) then
+      core.log('[use-package] copy %s -> %s', src, dest)
+      local ok, err = util.copy(src, dest)
+      if not ok then
+        return false, '[use-package] copy failed: ' .. (err or 'unknown')
+      end
+    end
+    return true
+  end
+
+  -- Unix: remove existing dest to handle stale or broken symlinks cleanly
+  local removed = os.remove(dest)
+  if not removed and util.fileExists(dest) then
+    local info = system.get_file_info(dest)
+    if info and not info.symlink then
+      util.rmrf(dest)
+    else
+      os.remove(dest)
+    end
+  end
+
+  local ret = os.execute(string.format('ln -sfn %q %q', src, dest))
+  if ret ~= 0 and ret ~= true then
+    return false, string.format('[use-package] failed to symlink %s to %s', src, dest)
+  end
+  return true
+end
+
+-- ---------------------------------------------------------------------------
+-- linkAddonSync — synchronously link an addon and its dependencies from a local repo
+-- ---------------------------------------------------------------------------
+function M.linkAddonSync(addon, hex)
+  local repo_url = util.dehexify(hex)
+  local repo_dir = manifestlib.repoLocalDir(repo_url)
+  if not util.isLocalPath(repo_dir) then
+    return false, 'not a local repo'
+  end
+
+  -- Auto-install manifest dependencies if not present
+  if addon.dependencies then
+    for dep_id, _ in pairs(addon.dependencies) do
+      local dep_dest = util.normPath(USERDIR .. '/plugins/' .. dep_id)
+      local dep_dest_lua = dep_dest .. '.lua'
+      local dep_lib = util.normPath(USERDIR .. '/libraries/' .. dep_id)
+      if not util.fileExists(dep_dest) and not util.fileExists(dep_dest_lua) and not util.fileExists(dep_lib) then
+        local dep_addon, dep_hex = manifestlib.searchAddon(dep_id)
+        if dep_addon and dep_hex then
+          local d_repo_dir  = manifestlib.repoLocalDir(util.dehexify(dep_hex))
+          local d_src_path  = dep_addon.path and (d_repo_dir .. '/' .. dep_addon.path) or d_repo_dir
+          local d_file_name = dep_addon.path and (dep_addon.path:match('[^\\/]+$') or dep_id) or dep_id
+          M.linkLocalSync({
+            plugin  = d_src_path,
+            name    = d_file_name,
+            library = (dep_addon.type == 'library'),
+          })
+        end
+      end
+    end
+  end
+
+  local src_path  = addon.path and (repo_dir .. '/' .. addon.path) or repo_dir
+  local file_name = addon.path and (addon.path:match('[^\\/]+$') or addon.id) or addon.id
+
+  return M.linkLocalSync({
+    plugin  = src_path,
+    name    = file_name,
+    library = (addon.type == 'library'),
+  })
+end
+
+-- ---------------------------------------------------------------------------
 -- fromLocal — symlink a local filesystem path into the plugins dir
 -- ---------------------------------------------------------------------------
 function M.fromLocal(spec)
   local promise = Promise.new()
   core.add_thread(function()
-    local src      = util.normPath(common.home_expand(spec.plugin))
-    local dest_dir = util.normPath(USERDIR .. (spec.library and '/libraries' or '/plugins'))
-    local name     = spec.name or util.plugName(common.basename(spec.plugin))
-    local dest     = util.normPath(util.join({dest_dir, name}))
-
-    system.mkdir(dest_dir)
-
-    if not util.fileExists(src) then
-      promise:reject(string.format('[use-package] source does not exist: %s', src))
-      return
-    end
-
-    if util.fileExists(dest) then
+    local ok, err = M.linkLocalSync(spec)
+    if ok then
       promise:resolve()
-      return
+    else
+      promise:reject(err)
     end
-
-    if PLATFORM == 'Windows' then
-      core.log('[use-package] copy %s -> %s', src, dest)
-      local ok, err = util.copy(src, dest)
-      if not ok then
-        promise:reject('[use-package] copy failed: ' .. (err or 'unknown'))
-      else
-        promise:resolve()
-      end
-      return
-    end
-
-    local out, code = util.exec({'ln', '-s', src, dest})
-    if code ~= 0 then promise:reject(out) else promise:resolve() end
   end)
   return promise
 end
@@ -123,6 +190,17 @@ function M.fromRepo(spec)
       return
     end
 
+    local repo_dir = manifestlib.repoLocalDir(util.dehexify(hex))
+    if util.isLocalPath(repo_dir) then
+      local ok, err = M.linkAddonSync(addon, hex)
+      if ok then
+        promise:resolve()
+      else
+        promise:reject(err)
+      end
+      return
+    end
+
     -- Auto-install manifest dependencies if not present
     if addon.dependencies then
       for dep_id, _ in pairs(addon.dependencies) do
@@ -149,7 +227,6 @@ function M.fromRepo(spec)
       end
     end
 
-    local repo_dir  = manifestlib.repoLocalDir(util.dehexify(hex))
     local src_path  = addon.path and (repo_dir .. '/' .. addon.path) or repo_dir
     local file_name = addon.path and (addon.path:match('[^\\/]+$') or spec.name) or spec.name
 
@@ -170,9 +247,20 @@ function M.unlink(spec)
   local dest_dir = util.normPath(USERDIR .. (spec.library and '/libraries' or '/plugins'))
   local dest = util.normPath(util.join({dest_dir, name}))
   local dest_lua = dest .. '.lua'
+
+  -- Attempt simple file/symlink removal first (safe on POSIX symlinks)
+  os.remove(dest)
+  os.remove(dest_lua)
+
   if util.fileExists(dest) then
-    util.rmrf(dest)
-  elseif util.fileExists(dest_lua) then
+    local info = system.get_file_info(dest)
+    if info and not info.symlink and info.type == 'dir' then
+      util.rmrf(dest)
+    else
+      os.remove(dest)
+    end
+  end
+  if util.fileExists(dest_lua) then
     os.remove(dest_lua)
   end
 end
@@ -196,20 +284,33 @@ function M.updateRepo(spec)
       return
     end
 
-    -- Refresh the installed file by re-running fromLocal
+    -- Refresh the installed file by re-running fromLocal or linkAddonSync
     local addon = manifestlib.searchAddon(spec.name, stored.repo_hex)
     if not addon then
       promise:resolve(true)  -- already up to date, file unchanged
       return
     end
 
-    local repo_dir  = manifestlib.repoLocalDir(repo_url)
+    local repo_dir = manifestlib.repoLocalDir(repo_url)
+    if util.isLocalPath(repo_dir) then
+      local ok, err = M.linkAddonSync(addon, stored.repo_hex)
+      if ok then
+        promise:resolve(true)
+      else
+        promise:reject(err)
+      end
+      return
+    end
+
     local src_path  = addon.path and (repo_dir .. '/' .. addon.path) or repo_dir
     local file_name = addon.path and (addon.path:match('[^\\/]+$') or spec.name) or spec.name
 
-    -- Remove existing symlink/copy before re-linking
+    -- Safely remove existing symlink/file before re-linking
     local dest_dir = USERDIR .. (addon.type == 'library' and '/libraries/' or '/plugins/')
-    util.rmrf(util.normPath(dest_dir .. file_name))
+    local dest = util.normPath(dest_dir .. file_name)
+    local dest_lua = dest .. '.lua'
+    os.remove(dest)
+    os.remove(dest_lua)
 
     M.fromLocal({
       plugin  = src_path,

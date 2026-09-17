@@ -264,11 +264,12 @@ local disabledCaptures = {
 
 --- @param doc core.doc
 function M.init(doc)
-	if not doc.filename then return end
+	local fname = doc.abs_filename or doc.filename
+	if not fname then return end
 
-	local langDef = languages.findDef(doc.abs_filename)
+	local langDef = languages.findDef(fname)
 	if not langDef then
-		core.log_quiet('treesit: no lang def for %s', doc.filename)
+		core.log_quiet('treesit: no lang def for %s', fname)
 		return
 	end
 

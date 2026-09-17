@@ -21,7 +21,7 @@ local DEFAULT_RAINBOW_COLORS = {
 ---@param y number
 function Renderer.draw_line(docview, line, x, y)
   local conf = config.plugins.indentguideex
-  if not conf or not conf.enabled or docview.doc.large_file then
+  if not conf or not conf.enabled or not docview.doc or docview.doc.large_file then
     return
   end
 

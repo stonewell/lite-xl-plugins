@@ -76,9 +76,11 @@ function M.updateRepo(repo)
   return out, code
 end
 
+M.updateManifestCache = updateManifestCache
+
 -- Search all cached manifests (or a specific one if repo_hex is given) for an
 -- addon whose id matches `name`.  Returns (addon_table, repo_hex) or (nil, nil).
-function M.searchAddon(name, repo_hex)
+function M.searchAddon(name, repo_hex, repos_list)
   local all = store.manifests()
   local function search_one(hex, manifest)
     if not manifest or not manifest.addons then return nil end
@@ -92,6 +94,14 @@ function M.searchAddon(name, repo_hex)
   if repo_hex then
     local addon = search_one(repo_hex, all[repo_hex])
     return addon, addon and repo_hex or nil
+  end
+
+  if repos_list then
+    for _, r in ipairs(repos_list) do
+      local hex = util.repoDir(r)
+      local addon = search_one(hex, all[hex])
+      if addon then return addon, hex end
+    end
   end
 
   for hex, manifest in pairs(all) do

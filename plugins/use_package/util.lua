@@ -115,16 +115,38 @@ function M.copy(src, dest)
 end
 
 -- Recursively remove a file or directory, like rm -rf.
+-- Safely handles symlinks without recursing into target directories.
 function M.rmrf(path)
   path = M.normPath(path)
+  -- Try removing as a regular file or symlink first without following the link.
+  -- In POSIX, os.remove() unlinks files and symlinks (including symlinks pointing
+  -- to directories) without touching the target directory contents.
+  local ok, err = os.remove(path)
+  if ok then return true end
+
   local info = system.get_file_info(path)
-  if not info then return end
+  if not info then
+    -- Broken symlink or nonexistent path; attempt removal once more
+    os.remove(path)
+    return
+  end
+
+  -- If it's a symlink (or Windows junction point), NEVER recurse into the target!
+  if info.symlink then
+    if PLATFORM == 'Windows' then
+      os.execute(string.format('rmdir %q', path))
+    else
+      os.remove(path)
+    end
+    return
+  end
+
   if info.type == 'dir' then
     for _, item in ipairs(system.list_dir(path) or {}) do
       M.rmrf(path .. PATHSEP .. item)
     end
+    os.remove(path)
   end
-  os.remove(path)
 end
 
 -- True for paths the user intends as local filesystem references.
@@ -163,7 +185,11 @@ function M.repoURL(repo)
     if ok and common and common.home_expand then
       base = common.home_expand(base)
     end
-    return M.normPath(base)
+    base = M.normPath(base)
+    if #base > 1 then
+      base = base:gsub('[/\\]+$', '')
+    end
+    return base
   end
   return base
 end

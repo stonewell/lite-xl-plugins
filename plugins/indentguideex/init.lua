@@ -71,7 +71,7 @@ function DocView:update(...)
   old_dv_update(self, ...)
 
   local conf = config.plugins.indentguideex
-  if not conf or not conf.enabled or not self:is(DocView) or self.doc.large_file then
+  if not conf or not conf.enabled or not self:is(DocView) or not self.doc or self.doc.large_file then
     self._igex_active_indents = nil
     return
   end

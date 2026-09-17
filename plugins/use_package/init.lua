@@ -34,23 +34,65 @@ local function schedule()
 end
 
 -- ---------------------------------------------------------------------------
--- Public API
--- ---------------------------------------------------------------------------
-
--- Register multi-plugin repo URLs (format: "url:tag").
--- Called before any use() declarations.
-function M.repos(list)
-  for _, r in ipairs(list) do
-    table.insert(_repos, r)
-  end
-end
-
--- ---------------------------------------------------------------------------
 -- pluginExists — check for directory or single .lua file in plugins dir
 -- ---------------------------------------------------------------------------
 local function pluginExists(name)
   return util.fileExists(USERDIR .. '/plugins/' .. name)
       or util.fileExists(USERDIR .. '/plugins/' .. name .. '.lua')
+end
+
+-- ---------------------------------------------------------------------------
+-- Public API
+-- ---------------------------------------------------------------------------
+
+-- Register multi-plugin repo URLs (format: "url:tag" or local dir).
+-- Called before any use() declarations.
+function M.repos(list)
+  for _, r in ipairs(list) do
+    table.insert(_repos, r)
+    local url = util.repoURL(r)
+    if util.isLocalPath(url) then
+      manifestlib.downloadRepo(r)
+      M.linkLocalRepo(r)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- linkLocalRepo — synchronously link all addons from a local repository
+-- ---------------------------------------------------------------------------
+function M.linkLocalRepo(repo)
+  local url = util.repoURL(repo)
+  if not util.isLocalPath(url) then return end
+  local hex = util.repoDir(repo)
+  local manifest = store.manifests()[hex]
+  if not manifest or not manifest.addons then return end
+
+  local config = require 'core.config'
+  for _, addon in ipairs(manifest.addons) do
+    if addon.id ~= 'use_package' and config.plugins[addon.id] ~= false then
+      local stored = store.getPlugin(addon.id)
+      local is_disabled = (stored and stored.enabled == false and config.plugins[addon.id] ~= true)
+      if not is_disabled then
+        local file_name = addon.path and (addon.path:match('[^\\/]+$') or addon.id) or addon.id
+        if not pluginExists(file_name) then
+          local ok, err = installer.linkAddonSync(addon, hex)
+          if ok then
+            store.addPlugin({
+              plugin = addon.id,
+              name = file_name,
+              enabled = true,
+              fullyInstalled = true,
+              installMethod = 'repo',
+              repo_hex = hex,
+            })
+          else
+            core.error('[use-package] failed to link %s: %s', addon.id, err or '?')
+          end
+        end
+      end
+    end
+  end
 end
 
 -- Declare a plugin.
@@ -110,6 +152,39 @@ function M.use(plugin, opts)
     local config = require 'core.config'
     if config.plugins[spec.name] == false then
       config.plugins[spec.name] = true
+    end
+
+    if not pluginExists(spec.name) then
+      if util.isLocalPath(spec.plugin) then
+        local ok, err = installer.linkLocalSync(spec)
+        if ok then
+          spec.fullyInstalled = true
+          spec.installMethod = 'local'
+          store.addPlugin(spec)
+        else
+          core.error('[use-package] failed to link %s: %s', spec.name, err or '?')
+        end
+      else
+        local addon, hex = manifestlib.searchAddon(spec.name, nil, _repos)
+        if addon and hex then
+          local repo_url = util.dehexify(hex)
+          if util.isLocalPath(repo_url) then
+            local ok, err = installer.linkAddonSync(addon, hex)
+            if ok then
+              spec.fullyInstalled = true
+              spec.installMethod = 'repo'
+              spec.repo_hex = hex
+              store.addPlugin(spec)
+            else
+              core.error('[use-package] failed to link %s: %s', spec.name, err or '?')
+            end
+          end
+        end
+      end
+    end
+
+    if pluginExists(spec.name) and not package.loaded['plugins.' .. spec.name] then
+      pcall(require, 'plugins.' .. spec.name)
     end
   end
 
@@ -224,7 +299,6 @@ function M.install()
       local out, code = manifestlib.downloadRepo(repo)
       if code ~= 0 then
         core.error('[use-package] could not fetch repo %s\n%s', repo, out)
-        return   -- do not proceed if a repo fails
       end
     end
 

@@ -192,6 +192,7 @@ function M.addNvimLang(opts)
 end
 
 function M.findDef(filename)
+	if not filename then return nil end
 	local bestScore = 0
 	local bestDef
 
