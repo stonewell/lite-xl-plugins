@@ -45,6 +45,14 @@ function M.repos(list)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- pluginExists — check for directory or single .lua file in plugins dir
+-- ---------------------------------------------------------------------------
+local function pluginExists(name)
+  return util.fileExists(USERDIR .. '/plugins/' .. name)
+      or util.fileExists(USERDIR .. '/plugins/' .. name .. '.lua')
+end
+
 -- Declare a plugin.
 -- plugin: string slug/URL/name, or table { plugin = '...', ... }
 -- opts keys:
@@ -142,14 +150,6 @@ local function detectMethod(spec)
   if util.isLocalPath(spec.plugin)     then return 'local' end
   if util.slugify(spec.plugin) and not spec.repo then return 'git' end
   return 'repo'
-end
-
--- ---------------------------------------------------------------------------
--- pluginExists — check for directory or single .lua file in plugins dir
--- ---------------------------------------------------------------------------
-local function pluginExists(name)
-  return util.fileExists(USERDIR .. '/plugins/' .. name)
-      or util.fileExists(USERDIR .. '/plugins/' .. name .. '.lua')
 end
 
 -- ---------------------------------------------------------------------------
