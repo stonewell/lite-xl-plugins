@@ -1,0 +1,124 @@
+{
+  "addons": [
+    {
+      "id": "avy",
+      "name": "avy",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Avy-style jump-to-char/word/line navigation with label overlays",
+      "path": "plugins/avy",
+      "type": "plugin"
+    },
+    {
+      "id": "bufferex",
+      "name": "bufferex",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Helm-mini style buffer and recent-file switcher with fuzzy filtering",
+      "path": "plugins/bufferex",
+      "type": "plugin",
+      "dependencies": {
+        "shared": {}
+      }
+    },
+    {
+      "id": "emacs",
+      "name": "emacs",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Emacs navigation utilities including push-mark and universal-argument",
+      "path": "plugins/emacs",
+      "type": "plugin"
+    },
+    {
+      "id": "fd-files",
+      "name": "fd-files",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Fast file finder overlay powered by fd",
+      "path": "plugins/fd-files",
+      "type": "plugin",
+      "dependencies": {
+        "shared": {}
+      }
+    },
+    {
+      "id": "indentguideex",
+      "name": "indentguideex",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Enhanced indentation guides with active scope highlighting and style options",
+      "path": "plugins/indentguideex",
+      "type": "plugin"
+    },
+    {
+      "id": "isearch",
+      "name": "isearch",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Emacs-style incremental search with live multi-match highlighting",
+      "path": "plugins/isearch",
+      "type": "plugin"
+    },
+    {
+      "id": "killring",
+      "name": "killring",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Emacs-style clipboard history with searchable listview overlay",
+      "path": "plugins/killring",
+      "type": "plugin",
+      "dependencies": {
+        "shared": {}
+      }
+    },
+    {
+      "id": "rgsearch",
+      "name": "rgsearch",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Fast project-wide search overlay powered by ripgrep",
+      "path": "plugins/rgsearch",
+      "type": "plugin",
+      "dependencies": {
+        "shared": {}
+      }
+    },
+    {
+      "id": "shared",
+      "name": "shared",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Shared listview overlay and search helpers for bufferex, fd-files, killring, and rgsearch",
+      "path": "plugins/shared",
+      "type": "plugin"
+    },
+    {
+      "id": "treesit",
+      "name": "treesit",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Tree-sitter syntax highlighting supporting Neovim parsers and fallback",
+      "path": "plugins/treesit",
+      "type": "plugin"
+    },
+    {
+      "id": "use_package",
+      "name": "use_package",
+      "version": "0.2.0",
+      "mod_version": "3",
+      "description": "Declarative plugin manager for Lite-XL inspired by Emacs use-package",
+      "path": "plugins/use_package",
+      "type": "plugin"
+    },
+    {
+      "id": "whichkey",
+      "name": "whichkey",
+      "version": "0.1.0",
+      "mod_version": "3",
+      "description": "Popup panel showing available key continuations after prefix keys",
+      "path": "plugins/whichkey",
+      "type": "plugin"
+    }
+  ]
+}

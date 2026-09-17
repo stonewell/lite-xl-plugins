@@ -1,0 +1,7 @@
+# Byte-compiled / cache / temp files
+*.swp
+*.swo
+*~
+*.bak
+.DS_Store
+.use-package-store
