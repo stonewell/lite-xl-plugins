@@ -52,6 +52,8 @@ end
 --   dependencies table    list of plugin specs to install first
 --   run          string   post-install shell command
 --   repo         string   pin to a specific registered repo URL
+--   enabled      boolean  set false to disable plugin (default: true)
+--   disabled     boolean  alternative to enabled = false
 --   config       function runs after all plugins have loaded
 --   bind         table    keybindings registered after load  { [key] = cmd }
 function M.use(plugin, opts)
@@ -63,7 +65,45 @@ function M.use(plugin, opts)
     if opts[k] ~= nil then spec[k] = opts[k] end
   end
 
-  table.insert(_plugins, spec)
+  local is_enabled = true
+  if opts.enabled ~= nil then
+    is_enabled = opts.enabled and true or false
+  elseif type(plugin) == 'table' and plugin.enabled ~= nil then
+    is_enabled = plugin.enabled and true or false
+  elseif opts.disabled ~= nil then
+    is_enabled = not opts.disabled
+  elseif type(plugin) == 'table' and plugin.disabled ~= nil then
+    is_enabled = not plugin.disabled
+  end
+  spec.enabled = is_enabled
+
+  -- Check if already registered in _plugins; if so, update spec in place
+  local found = false
+  for i, s in ipairs(_plugins) do
+    if s.name == spec.name or s.plugin == spec.plugin then
+      _plugins[i] = spec
+      found = true
+      break
+    end
+  end
+  if not found then
+    table.insert(_plugins, spec)
+  end
+
+  if not is_enabled then
+    local config = require 'core.config'
+    config.plugins[spec.name] = false
+    if pluginExists(spec.name) then
+      installer.unlink(spec)
+    end
+    store.addPlugin(spec)
+    return
+  else
+    local config = require 'core.config'
+    if config.plugins[spec.name] == false then
+      config.plugins[spec.name] = true
+    end
+  end
 
   -- normalise onto spec so installSingle can access them after a hot-install
   if opts.bind then spec.bind = opts.bind end
@@ -78,6 +118,20 @@ function M.use(plugin, opts)
     schedule()
     table.insert(_pending, configFn)
   end
+end
+
+-- Disable a plugin concisely
+function M.disable(plugin, opts)
+  opts = opts or {}
+  opts.enabled = false
+  return M.use(plugin, opts)
+end
+
+-- Enable a plugin concisely
+function M.enable(plugin, opts)
+  opts = opts or {}
+  opts.enabled = true
+  return M.use(plugin, opts)
 end
 
 -- ---------------------------------------------------------------------------
@@ -176,6 +230,13 @@ function M.install()
 
     -- Step 2: install declared plugins
     local function installSpec(spec)
+      if spec.enabled == false then
+        if pluginExists(spec.name) then
+          installer.unlink(spec)
+        end
+        return
+      end
+
       local stored = store.getPlugin(spec.plugin) or {}
       local already = stored.fullyInstalled and pluginExists(spec.name)
       if already then
@@ -220,35 +281,37 @@ end
 function M.update()
   core.add_thread(function()
     for _, spec in ipairs(_plugins) do
-      local name   = spec.name
-      local stored = store.getPlugin(spec.plugin)
+      if spec.enabled ~= false then
+        local name   = spec.name
+        local stored = store.getPlugin(spec.plugin)
 
-      if not pluginExists(name) then
-        M.installSingle(spec)
-      elseif stored then
-        local method = stored.installMethod or detectMethod(spec)
-        core.log('[use-package] updating %s…', name)
+        if not pluginExists(name) then
+          M.installSingle(spec)
+        elseif stored then
+          local method = stored.installMethod or detectMethod(spec)
+          core.log('[use-package] updating %s…', name)
 
-        local function onDone(already)
-          if already then
-            core.log('[use-package] %s already up to date', name)
-          else
-            core.log('[use-package] updated %s', name)
-            spec.fullyInstalled = true
-            spec.installMethod  = method
-            store.addPlugin(spec)
+          local function onDone(already)
+            if already then
+              core.log('[use-package] %s already up to date', name)
+            else
+              core.log('[use-package] updated %s', name)
+              spec.fullyInstalled = true
+              spec.installMethod  = method
+              store.addPlugin(spec)
+            end
           end
-        end
-        local function onFail(err)
-          core.error('[use-package] update failed for %s: %s', name, err or '?')
-        end
+          local function onFail(err)
+            core.error('[use-package] update failed for %s: %s', name, err or '?')
+          end
 
-        if method == 'repo' then
-          installer.updateRepo(spec):done(onDone):fail(onFail)
-        elseif method == 'git' then
-          installer.updateGit(spec):done(onDone):fail(onFail)
+          if method == 'repo' then
+            installer.updateRepo(spec):done(onDone):fail(onFail)
+          elseif method == 'git' then
+            installer.updateGit(spec):done(onDone):fail(onFail)
+          end
+          -- 'local' plugins are managed by the dotfile repo; skip
         end
-        -- 'local' plugins are managed by the dotfile repo; skip
       end
     end
   end)
@@ -278,16 +341,9 @@ end
 -- remove — delete installed files and drop from store
 -- ---------------------------------------------------------------------------
 function M.remove(spec)
-  local slug = util.slugify(spec.plugin)
-  local name = spec.name
-  if slug then
-    -- directory-based plugin
-    os.remove(USERDIR .. '/plugins/' .. name)
-  else
-    -- single-file plugin
-    os.remove(USERDIR .. '/plugins/' .. name .. '.lua')
-  end
-  store.removePlugin(spec.plugin)
+  local name = spec.name or util.plugName(spec.plugin)
+  installer.unlink(spec)
+  store.removePlugin(spec.plugin or spec.name)
   core.log('[use-package] removed %s', name)
 end
 
@@ -298,6 +354,100 @@ command.add(nil, {
   ['use-package:install'] = function() M.install() end,
   ['use-package:update']  = function() M.update() end,
   ['use-package:reinstall'] = function() M.reinstallAll() end,
+
+  ['use-package:disable-plugin'] = function()
+    local names = {}
+    for _, spec in ipairs(_plugins) do
+      if spec.enabled ~= false and pluginExists(spec.name) then
+        table.insert(names, spec.name)
+      end
+    end
+    core.command_view:enter('Disable plugin', {
+      submit = function(name)
+        M.disable(name)
+        core.log('[use-package] disabled %s (restart Lite-XL if already loaded)', name)
+      end,
+      suggest = function(text)
+        local common = require 'core.common'
+        return common.fuzzy_match(names, text)
+      end,
+    })
+  end,
+
+  ['use-package:enable-plugin'] = function()
+    local names = {}
+    local seen = {}
+    for _, spec in ipairs(_plugins) do
+      if spec.enabled == false or not pluginExists(spec.name) then
+        if not seen[spec.name] then
+          table.insert(names, spec.name)
+          seen[spec.name] = true
+        end
+      end
+    end
+    for hex, manifest in pairs(store.manifests()) do
+      if manifest.addons then
+        for _, addon in ipairs(manifest.addons) do
+          if not seen[addon.id] and (not pluginExists(addon.id) or not (store.getPlugin(addon.id) or {}).fullyInstalled) then
+            table.insert(names, addon.id)
+            seen[addon.id] = true
+          end
+        end
+      end
+    end
+    core.command_view:enter('Enable plugin', {
+      submit = function(name)
+        M.enable(name)
+        M.installSingle({ plugin = name, name = name, enabled = true })
+        core.log('[use-package] enabled %s', name)
+      end,
+      suggest = function(text)
+        local common = require 'core.common'
+        return common.fuzzy_match(names, text)
+      end,
+    })
+  end,
+
+  ['use-package:toggle-plugin'] = function()
+    local items = {}
+    local seen = {}
+    for _, spec in ipairs(_plugins) do
+      local is_active = (spec.enabled ~= false and pluginExists(spec.name))
+      local status = is_active and '[enabled] ' or '[disabled] '
+      table.insert(items, status .. spec.name)
+      seen[spec.name] = true
+    end
+    for hex, manifest in pairs(store.manifests()) do
+      if manifest.addons then
+        for _, addon in ipairs(manifest.addons) do
+          if not seen[addon.id] then
+            local status = pluginExists(addon.id) and '[enabled] ' or '[disabled] '
+            table.insert(items, status .. addon.id)
+            seen[addon.id] = true
+          end
+        end
+      end
+    end
+    core.command_view:enter('Toggle plugin', {
+      submit = function(item)
+        local is_en = item:match('^%[enabled%]')
+        local name = item:match('^%[[^%]]+%]%s*(.+)$')
+        if not name then return end
+        if is_en then
+          M.disable(name)
+          core.log('[use-package] disabled %s (restart Lite-XL if already loaded)', name)
+        else
+          M.enable(name)
+          M.installSingle({ plugin = name, name = name, enabled = true })
+          core.log('[use-package] enabled %s', name)
+        end
+      end,
+      suggest = function(text)
+        local common = require 'core.common'
+        return common.fuzzy_match(items, text)
+      end,
+    })
+  end,
 })
 
 return M

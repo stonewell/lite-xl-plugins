@@ -147,15 +147,25 @@ function M.dehexify(hex)
   return (hex:gsub('%x%x', function(d) return string.char(tonumber(d, 16)) end))
 end
 
--- Strip the ":tag" suffix from a "url:tag" repo string, returning just the URL.
--- Pattern anchored to "protocol://" so the colon in "https:" is not treated as separator.
-function M.repoURL(repo)
-  return repo:match('^%w+://[^:]+')
+-- Extract the tag from a "url:tag" or "path:tag" string. Returns nil if no tag present.
+-- Matches :tag at the end of the string, ensuring tag contains no slashes or colons.
+function M.repoTag(repo)
+  return repo:match(':([^/\\:]+)$')
 end
 
--- Extract the tag from a "url:tag" repo string. Returns nil if no tag present.
-function M.repoTag(repo)
-  return repo:match('^%w+://.+:(.+)')
+-- Strip the ":tag" suffix from a "url:tag" or "path:tag" string, returning the URL or path.
+-- For local paths, expands ~ to full home directory and normalizes path separators.
+function M.repoURL(repo)
+  local tag = M.repoTag(repo)
+  local base = tag and repo:sub(1, #repo - #tag - 1) or repo
+  if M.isLocalPath(base) then
+    local ok, common = pcall(require, 'core.common')
+    if ok and common and common.home_expand then
+      base = common.home_expand(base)
+    end
+    return M.normPath(base)
+  end
+  return base
 end
 
 function M.repoDir(repo)

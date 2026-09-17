@@ -27,14 +27,17 @@ All calls to `up.repos{}` and `up.use()` must appear after this line.
 
 ## `up.repos(list)`
 
-Register one or more multi-plugin repository URLs. Each entry is a string of the form
-`"url:branch-or-tag"`. The repo is cloned (once) when `use-package:install` is run
-and its `manifest.json` is cached locally. Plugins searched by plain name (install
-method `repo`) are looked up in these manifests.
+Register one or more multi-plugin repository URLs or local directory paths. Each entry
+is a string of the form `"url:branch-or-tag"`, `"url"`, or a local filesystem path like
+`"~/Work/github/lite-xl-plugins"`. Remote repos are cloned (once) when `use-package:install`
+is run and their `manifest.json` is cached locally. Local repository manifests are loaded
+directly from disk. Plugins searched by plain name (install method `repo`) are looked up
+in these manifests.
 
 ```lua
 up.repos {
   'https://github.com/lite-xl/lite-xl-plugins.git:master',
+  '~/Work/github/lite-xl-plugins',
   'https://github.com/my-org/private-plugins.git:main',
 }
 ```
@@ -71,8 +74,20 @@ up.use({ plugin = plugin_string, ... })   -- table form, all keys inline
 | `repo` | string | Pin lookup to a specific registered repo URL (repo install method only). |
 | `dependencies` | table | List of plugin specs to install before this one. Each entry may be a plain name string or a full spec table. |
 | `run` | string | Shell command executed inside the installed plugin directory after a successful install (e.g. to compile native libraries). |
+| `enabled` | boolean | Set to `false` to disable the plugin (default: `true`). Sets `config.plugins[name] = false` to prevent Lite-XL from loading it and unlinks the plugin files. |
+| `disabled` | boolean | Alternative to `enabled = false`. |
 | `config` | function | Runs after all plugins have loaded. Use to set `config.plugins.*` options. |
 | `bind` | table | Keybindings registered after load. Map of `{ ["key-combo"] = "command:name" }`. |
+
+### Disabling a plugin
+
+```lua
+-- Disable a declared plugin:
+up.use('whichkey', { enabled = false })
+
+-- Or using the shortcut:
+up.disable 'whichkey'
+```
 
 ---
 
@@ -187,6 +202,9 @@ Run these from the command palette (`ctrl+shift+p`):
 | `use-package:install` | Clone/download any registered repos, then install all declared plugins that are not yet present. Already-installed plugins are updated. |
 | `use-package:update` | Update all installed plugins (git pull / re-copy from repo). Installs any that are missing. |
 | `use-package:reinstall` | Remove and reinstall all tracked non-local plugins. |
+| `use-package:disable-plugin` | Interactive picker to disable an installed plugin (sets `config.plugins[name] = false` and removes symlink). |
+| `use-package:enable-plugin` | Interactive picker to enable and install an addon from registered repos. |
+| `use-package:toggle-plugin` | Interactive picker to toggle the enabled/disabled status of a plugin. |
 
 ---
 

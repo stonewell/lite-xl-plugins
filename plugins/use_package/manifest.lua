@@ -6,10 +6,14 @@ local M = {}
 local REPOS_DIR = util.normPath(USERDIR .. '/up-repos')
 
 local function repoLocalDir(repo)
+  local url = util.repoURL(repo)
+  if util.isLocalPath(url) then
+    return url
+  end
   return util.join({REPOS_DIR, util.repoDir(repo)})
 end
 
--- Read manifest.json from the cloned repo and cache it in the store.
+-- Read manifest.json from the cloned or local repo and cache it in the store.
 local function updateManifestCache(repo)
   local dir = repoLocalDir(repo)
   local f = io.open(dir .. '/manifest.json')
@@ -19,12 +23,21 @@ local function updateManifestCache(repo)
   store.addRepo(util.repoDir(repo), content)
 end
 
--- Clone the repo if not present, then checkout the pinned tag.
+-- Clone the repo if remote and not present, then checkout the pinned tag.
+-- For local paths, directly validates and caches manifest.json.
 -- Returns (output, exit_code).
 function M.downloadRepo(repo)
   local url = util.repoURL(repo)
   local tag = util.repoTag(repo)
   local dir = repoLocalDir(repo)
+
+  if util.isLocalPath(url) then
+    if not util.fileExists(url .. '/manifest.json') then
+      return string.format('[use-package] local manifest not found: %s/manifest.json', url), -1
+    end
+    updateManifestCache(repo)
+    return '', 0
+  end
 
   system.mkdir(REPOS_DIR)   -- ensure parent exists on first run
 
@@ -48,7 +61,13 @@ function M.downloadRepo(repo)
 end
 
 -- Pull the latest changes for an already-cloned repo, then re-cache the manifest.
+-- For local paths, simply refreshes the cached manifest.
 function M.updateRepo(repo)
+  local url = util.repoURL(repo)
+  if util.isLocalPath(url) then
+    updateManifestCache(repo)
+    return '', 0
+  end
   local dir = repoLocalDir(repo)
   local out, code = util.gitCmd({'pull'}, dir)
   if code == 0 then

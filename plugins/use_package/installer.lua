@@ -123,6 +123,32 @@ function M.fromRepo(spec)
       return
     end
 
+    -- Auto-install manifest dependencies if not present
+    if addon.dependencies then
+      for dep_id, _ in pairs(addon.dependencies) do
+        local dep_dest = util.normPath(USERDIR .. '/plugins/' .. dep_id)
+        local dep_dest_lua = dep_dest .. '.lua'
+        local dep_lib = util.normPath(USERDIR .. '/libraries/' .. dep_id)
+        if not util.fileExists(dep_dest) and not util.fileExists(dep_dest_lua) and not util.fileExists(dep_lib) then
+          local dep_addon, dep_hex = manifestlib.searchAddon(dep_id)
+          if dep_addon and dep_hex then
+            local d_repo_dir  = manifestlib.repoLocalDir(util.dehexify(dep_hex))
+            local d_src_path  = dep_addon.path and (d_repo_dir .. '/' .. dep_addon.path) or d_repo_dir
+            local d_file_name = dep_addon.path and (dep_addon.path:match('[^\\/]+$') or dep_id) or dep_id
+            local dep_done = false
+            M.fromLocal({
+              plugin  = d_src_path,
+              name    = d_file_name,
+              library = (dep_addon.type == 'library'),
+            }):done(function() dep_done = true end):fail(function() dep_done = true end)
+            while not dep_done do
+              coroutine.yield(0.05)
+            end
+          end
+        end
+      end
+    end
+
     local repo_dir  = manifestlib.repoLocalDir(util.dehexify(hex))
     local src_path  = addon.path and (repo_dir .. '/' .. addon.path) or repo_dir
     local file_name = addon.path and (addon.path:match('[^\\/]+$') or spec.name) or spec.name
@@ -134,6 +160,21 @@ function M.fromRepo(spec)
     }):forward(promise)
   end)
   return promise
+end
+
+-- ---------------------------------------------------------------------------
+-- unlink — remove symlink/installed files for a plugin
+-- ---------------------------------------------------------------------------
+function M.unlink(spec)
+  local name = spec.name or util.plugName(spec.plugin)
+  local dest_dir = util.normPath(USERDIR .. (spec.library and '/libraries' or '/plugins'))
+  local dest = util.normPath(util.join({dest_dir, name}))
+  local dest_lua = dest .. '.lua'
+  if util.fileExists(dest) then
+    util.rmrf(dest)
+  elseif util.fileExists(dest_lua) then
+    os.remove(dest_lua)
+  end
 end
 
 -- Update a repo-installed plugin:
