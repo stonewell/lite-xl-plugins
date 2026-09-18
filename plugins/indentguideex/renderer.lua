@@ -32,7 +32,12 @@ function Renderer.draw_line(docview, line, x, y)
   indent_size = indent_size or config.indent_size or 2
 
   local font = docview:get_font()
-  local space_sz = font:get_width(" ")
+  local space_sz = docview._igex_space_sz
+  if not space_sz or docview._igex_font ~= font then
+    space_sz = font:get_width(" ")
+    docview._igex_space_sz = space_sz
+    docview._igex_font = font
+  end
   local h = docview:get_line_height()
 
   local w = conf.line_width or math.max(1, math.ceil(space_sz * 0.15))
@@ -44,7 +49,8 @@ function Renderer.draw_line(docview, line, x, y)
   local base_color = style.guide or style.selection or { 255, 255, 255, 40 }
   local highlight_color = style.guide_highlight or style.accent or { 255, 255, 255, 120 }
 
-  local active_lvl = docview._igex_active_indents and docview._igex_active_indents[line] or -1
+  local scope = docview._igex_active_scope
+  local active_lvl = (scope and line >= scope.s_line and line <= scope.e_line) and scope.lvl or -1
 
   local start_i = show_level_0 and 0 or indent_size
   for i = start_i, spaces - 1, indent_size do

@@ -72,28 +72,25 @@ function DocView:update(...)
 
   local conf = config.plugins.indentguideex
   if not conf or not conf.enabled or not self:is(DocView) or not self.doc or self.doc.large_file then
-    self._igex_active_indents = nil
+    self._igex_active_scope = nil
     return
   end
 
   if not conf.active_highlight then
-    self._igex_active_indents = nil
+    self._igex_active_scope = nil
     return
   end
 
   local line1, col1 = self.doc:get_selection()
   local change_id = self.doc:get_change_id()
-  local minline, maxline = self:get_visible_line_range()
 
-  -- Check memoized caret/view state to skip redundant recalculations
+  -- Check memoized caret/doc state: when scrolling without moving caret, NEVER recalculate!
   local last = self._igex_last_state
   if last
     and last.line == line1
     and last.col == col1
     and last.change_id == change_id
-    and last.minline == minline
-    and last.maxline == maxline
-    and self._igex_active_indents
+    and self._igex_active_scope ~= nil
   then
     return
   end
@@ -102,11 +99,14 @@ function DocView:update(...)
     line = line1,
     col = col1,
     change_id = change_id,
-    minline = minline,
-    maxline = maxline,
   }
 
-  self._igex_active_indents = Scope.get_active_indents(self, minline, maxline)
+  local s_line, e_line, lvl = Scope.get_active_scope(self)
+  if s_line then
+    self._igex_active_scope = { s_line = s_line, e_line = e_line, lvl = lvl }
+  else
+    self._igex_active_scope = false
+  end
 end
 
 local old_draw_line_text = DocView.draw_line_text

@@ -66,42 +66,28 @@ local function get_treesit_scope(doc, line, col, indent_size)
   return s_line, e_line, active_lvl
 end
 
----Compute active scope indents table for all visible lines in docview.
----Returns a map [line] -> active_lvl for lines within the active scope.
+---Compute active scope range and level around the caret.
+---Returns s_line, e_line, active_lvl or nil.
+---This is completely independent of visible line range and remains valid during scrolling.
 ---@param docview core.docview
----@param minline integer
----@param maxline integer
----@return table<integer, integer>
-function Scope.get_active_indents(docview, minline, maxline)
+---@return integer? s_line, integer? e_line, integer? active_lvl
+function Scope.get_active_scope(docview)
   local doc = docview.doc
-  if doc.large_file then return {} end
+  if not doc or doc.large_file then return nil end
 
   local line1, col1 = doc:get_selection()
   local _, indent_size = doc:get_indent_info()
   indent_size = indent_size or config.indent_size or 2
 
-  local active_indents = {}
-  local max_margin = 200
-
-  -- Only compute active scope if caret is within or near visible range
-  if line1 < minline - max_margin or line1 > maxline + max_margin then
-    return active_indents
-  end
-
   -- 1. Try Tree-sitter scope detection
   local s_line, e_line, ts_lvl = get_treesit_scope(doc, line1, col1, indent_size)
   if s_line and e_line and ts_lvl then
-    local from_line = math.max(minline, s_line)
-    local to_line = math.min(maxline, e_line)
-    for l = from_line, to_line do
-      active_indents[l] = ts_lvl
-    end
-    return active_indents
+    return s_line, e_line, ts_lvl
   end
 
   -- 2. Fallback: Indentation-based block detection
   local lvl = Cache.get_guide_spaces(doc, line1)
-  if lvl <= 0 then return active_indents end
+  if lvl <= 0 then return nil end
 
   local top, bottom
   local next_indent = Cache.get_guide_spaces(doc, line1 + 1)
@@ -115,33 +101,50 @@ function Scope.get_active_indents(docview, minline, maxline)
     lvl = prev_indent
   end
 
-  active_indents[line1] = lvl
+  local s_line = line1
+  local e_line = line1
+  local max_margin = 200
 
   -- Walk upwards
   local i = line1 - 1
-  local min_limit = math.max(1, minline - 10)
+  local min_limit = math.max(1, line1 - max_margin)
   if i > 0 and not top then
     while i >= min_limit do
       local ind = Cache.get_guide_spaces(doc, i)
       if ind <= lvl - indent_size then break end
-      active_indents[i] = lvl
+      s_line = i
       i = i - 1
     end
   end
 
   -- Walk downwards
   i = line1 + 1
-  local max_limit = math.min(#doc.lines, maxline + 10)
+  local max_limit = math.min(#doc.lines, line1 + max_margin)
   if i <= #doc.lines and not bottom then
     while i <= max_limit do
       local ind = Cache.get_guide_spaces(doc, i)
       if ind <= lvl - indent_size then break end
-      active_indents[i] = lvl
+      e_line = i
       i = i + 1
     end
   end
 
-  return active_indents
+  return s_line, e_line, lvl
+end
+
+---Compute active scope indents table for visible lines (backward compatibility).
+---@param docview core.docview
+---@param minline integer
+---@param maxline integer
+---@return table<integer, integer>
+function Scope.get_active_indents(docview, minline, maxline)
+  local s, e, lvl = Scope.get_active_scope(docview)
+  if not s then return {} end
+  local res = {}
+  for l = math.max(minline, s), math.min(maxline, e) do
+    res[l] = lvl
+  end
+  return res
 end
 
 return Scope
