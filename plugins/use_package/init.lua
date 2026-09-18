@@ -99,8 +99,17 @@ function M.repos(list)
     if util.isLocalPath(url) then
       manifestlib.downloadRepo(r)
       M.linkLocalRepo(r)
+    else
+      local dir = manifestlib.repoLocalDir(r)
+      if util.fileExists(dir) then
+        manifestlib.updateManifestCache(r)
+      end
     end
   end
+end
+
+function M.getRepos()
+  return _repos
 end
 
 -- ---------------------------------------------------------------------------
@@ -222,7 +231,8 @@ function M.use(plugin, opts)
         local addon, hex = manifestlib.searchAddon(spec.name, nil, _repos)
         if addon and hex then
           local repo_url = util.dehexify(hex)
-          if util.isLocalPath(repo_url) then
+          local repo_dir = manifestlib.repoLocalDir(repo_url)
+          if util.fileExists(repo_dir) then
             local ok, err = installer.linkAddonSync(addon, hex)
             if ok then
               spec.fullyInstalled = true
@@ -276,8 +286,8 @@ end
 -- ---------------------------------------------------------------------------
 local function detectMethod(spec)
   if spec.installMethod then return spec.installMethod end
-  if util.isLocalPath(spec.plugin)     then return 'local' end
-  if util.slugify(spec.plugin) and not spec.repo then return 'git' end
+  if util.isLocalPath(spec.plugin) then return 'local' end
+  if (util.slugify(spec.plugin) or util.isURL(spec.plugin)) and not spec.repo then return 'git' end
   return 'repo'
 end
 
@@ -411,14 +421,11 @@ function M.update()
     -- Check if any repo provides a newer version of use_package itself
     local up_addon, up_hex = manifestlib.searchAddon('use_package', nil, _repos)
     if up_addon and up_addon.version and util.compareVersions(up_addon.version, M.VERSION) > 0 then
-      local repo_url = util.dehexify(up_hex)
-      if util.isLocalPath(repo_url) then
-        local ok, err = installer.linkAddonSync(up_addon, up_hex)
-        if ok then
-          core.log('[use-package] updated use_package to %s from %s', up_addon.version, repo_url)
-        else
-          core.error('[use-package] failed to update use_package: %s', err or '?')
-        end
+      local ok, err = installer.linkAddonSync(up_addon, up_hex)
+      if ok then
+        core.log('[use-package] updated use_package to %s', up_addon.version)
+      else
+        core.error('[use-package] failed to update use_package: %s', err or '?')
       end
     end
 
@@ -608,14 +615,17 @@ function M.autoStartup()
 
     _auto_startup_running = true
 
-    -- Update repos if auto_update is enabled, or download if missing and auto_install is enabled
+    -- Update repos if auto_update is enabled, or download if missing and auto_install or auto_update is enabled
     for _, repo in ipairs(_repos) do
       local url = util.repoURL(repo)
       if not util.isLocalPath(url) then
-        if auto_update then
+        local dir = manifestlib.repoLocalDir(repo)
+        if not util.fileExists(dir) then
+          if auto_install or auto_update then
+            manifestlib.downloadRepo(repo)
+          end
+        elseif auto_update then
           manifestlib.updateRepo(repo)
-        elseif auto_install then
-          manifestlib.downloadRepo(repo)
         end
       end
     end
@@ -624,14 +634,11 @@ function M.autoStartup()
     if auto_update then
       local up_addon, up_hex = manifestlib.searchAddon('use_package', nil, _repos)
       if up_addon and up_addon.version and util.compareVersions(up_addon.version, M.VERSION) > 0 then
-        local repo_url = util.dehexify(up_hex)
-        if util.isLocalPath(repo_url) then
-          local ok, err = installer.linkAddonSync(up_addon, up_hex)
-          if ok then
-            core.log('[use-package] auto-updated use_package to %s from %s', up_addon.version, repo_url)
-          else
-            core.error('[use-package] failed to auto-update use_package: %s', err or '?')
-          end
+        local ok, err = installer.linkAddonSync(up_addon, up_hex)
+        if ok then
+          core.log('[use-package] auto-updated use_package to %s', up_addon.version)
+        else
+          core.error('[use-package] failed to auto-update use_package: %s', err or '?')
         end
       end
     end
@@ -656,8 +663,8 @@ function M.autoStartup()
           M.installSingle(spec)
         elseif exists and auto_update then
           local stored = store.getPlugin(spec.plugin)
-          if stored then
-            local method = stored.installMethod or detectMethod(spec)
+          local method = stored and stored.installMethod or detectMethod(spec)
+          if stored or method == 'repo' or method == 'git' then
             local function onDone(already)
               if not already then
                 core.log('[use-package] auto-updated %s', name)
