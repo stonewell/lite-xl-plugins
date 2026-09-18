@@ -18,8 +18,9 @@ function FdView:__tostring() return "FdView" end
 
 function FdView:new(root)
   FdView.super.new(self)
-  self.root      = root
-  self.searching = false
+  self.is_file_list = true
+  self.root         = root
+  self.searching    = false
   self:begin_search()
 end
 

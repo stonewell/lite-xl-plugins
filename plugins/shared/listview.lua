@@ -81,6 +81,13 @@ local function filter_text(self)
   return self.filter_doc:get_text(1, 1, 1, math.huge)
 end
 
+local function compare_score(a, b)
+  if a.score == b.score then
+    return a.idx < b.idx
+  end
+  return a.score > b.score
+end
+
 -- reset_selection: true when filter text changed (jump to item 1),
 -- false when streaming (preserve current selection).
 function ListView:update_filter(reset_selection)
@@ -88,12 +95,19 @@ function ListView:update_filter(reset_selection)
   if ft == "" then
     self.filtered_results = self.results
   else
-    self.filtered_results = {}
-    for _, item in ipairs(self.results) do
+    local matches = {}
+    local is_files = self.is_file_list or false
+    for idx, item in ipairs(self.results) do
       local hay = self:get_item_text(item)
-      if common.fuzzy_match(hay, ft) then
-        table.insert(self.filtered_results, item)
+      local score = common.fuzzy_match(hay, ft, is_files)
+      if score then
+        table.insert(matches, { item = item, score = score, idx = idx })
       end
+    end
+    table.sort(matches, compare_score)
+    self.filtered_results = {}
+    for i, m in ipairs(matches) do
+      self.filtered_results[i] = m.item
     end
   end
   if reset_selection or self.selected_idx == 0 then

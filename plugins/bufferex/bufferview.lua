@@ -121,18 +121,41 @@ end
 function BufferExView:update_filter(reset_selection)
   local ft = self.filter_doc:get_text(1, 1, 1, math.huge)
 
-  local function matches(item)
-    if ft == "" then return true end
-    return common.fuzzy_match(self:get_item_text(item), ft)
+  local function compare_score(a, b)
+    if a.score == b.score then
+      return a.idx < b.idx
+    end
+    return a.score > b.score
   end
 
   local bufs, recs = {}, {}
-  for _, item in ipairs(self.results) do
-    if item.kind == "buffer" and matches(item) then
-      table.insert(bufs, item)
-    elseif item.kind == "recent" and matches(item) then
-      table.insert(recs, item)
+  for idx, item in ipairs(self.results) do
+    if ft == "" then
+      if item.kind == "buffer" then
+        table.insert(bufs, item)
+      elseif item.kind == "recent" then
+        table.insert(recs, item)
+      end
+    else
+      local hay = self:get_item_text(item)
+      local is_file = (item.kind == "recent")
+      local score = common.fuzzy_match(hay, ft, is_file)
+      if score then
+        local entry = { item = item, score = score, idx = idx }
+        if item.kind == "buffer" then
+          table.insert(bufs, entry)
+        elseif item.kind == "recent" then
+          table.insert(recs, entry)
+        end
+      end
     end
+  end
+
+  if ft ~= "" then
+    table.sort(bufs, compare_score)
+    table.sort(recs, compare_score)
+    for i, e in ipairs(bufs) do bufs[i] = e.item end
+    for i, e in ipairs(recs) do recs[i] = e.item end
   end
 
   self.filtered_results = {}
