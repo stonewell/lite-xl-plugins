@@ -208,4 +208,21 @@ function M.join(parts)
   return str:gsub(string.format('%s$', '%' .. PATHSEP), '')
 end
 
+-- Compares two semantic version strings (e.g. "0.2.1" vs "0.2.0").
+-- Returns 1 if v1 > v2, -1 if v1 < v2, 0 if v1 == v2.
+function M.compareVersions(v1, v2)
+  if not v1 or not v2 then return 0 end
+  local p1, p2 = {}, {}
+  for num in tostring(v1):gmatch('%d+') do table.insert(p1, tonumber(num)) end
+  for num in tostring(v2):gmatch('%d+') do table.insert(p2, tonumber(num)) end
+  local len = math.max(#p1, #p2)
+  for i = 1, len do
+    local n1 = p1[i] or 0
+    local n2 = p2[i] or 0
+    if n1 > n2 then return 1 end
+    if n1 < n2 then return -1 end
+  end
+  return 0
+end
+
 return M

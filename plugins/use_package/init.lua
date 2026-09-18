@@ -1,15 +1,54 @@
--- mod-version:3
-local core      = require 'core'
-local command   = require 'core.command'
-local keymap    = require 'core.keymap'
-local store     = require 'plugins.use_package.store'
-local util      = require 'plugins.use_package.util'
+-- mod-version:4 --priority:0
+local core        = require 'core'
+local common      = require 'core.common'
+local config      = require 'core.config'
+local command     = require 'core.command'
+local keymap      = require 'core.keymap'
+local store       = require 'plugins.use_package.store'
+local util        = require 'plugins.use_package.util'
 local manifestlib = require 'plugins.use_package.manifest'
-local installer = require 'plugins.use_package.installer'
+local installer   = require 'plugins.use_package.installer'
 
 store.init()
 
-local M = {}
+config.plugins.use_package = common.merge({
+  auto_install = false,
+  auto_update  = false,
+}, config.plugins.use_package)
+
+local M = {
+  VERSION = "0.2.0"
+}
+
+function M.setup(opts)
+  opts = opts or {}
+  if opts.auto_install ~= nil then
+    config.plugins.use_package.auto_install = opts.auto_install and true or false
+  end
+  if opts.auto_update ~= nil then
+    config.plugins.use_package.auto_update = opts.auto_update and true or false
+  end
+end
+
+setmetatable(M, {
+  __index = function(t, k)
+    if k == 'auto_install' then
+      return config.plugins.use_package.auto_install
+    elseif k == 'auto_update' then
+      return config.plugins.use_package.auto_update
+    end
+    return rawget(t, k)
+  end,
+  __newindex = function(t, k, v)
+    if k == 'auto_install' then
+      config.plugins.use_package.auto_install = v and true or false
+    elseif k == 'auto_update' then
+      config.plugins.use_package.auto_update = v and true or false
+    else
+      rawset(t, k, v)
+    end
+  end,
+})
 
 -- Internal registry — populated by use() calls in the user's init.lua
 local _plugins  = {}
@@ -36,9 +75,15 @@ end
 -- ---------------------------------------------------------------------------
 -- pluginExists — check for directory or single .lua file in plugins dir
 -- ---------------------------------------------------------------------------
-local function pluginExists(name)
+local function pluginExistsInUserdir(name)
   return util.fileExists(USERDIR .. '/plugins/' .. name)
       or util.fileExists(USERDIR .. '/plugins/' .. name .. '.lua')
+end
+
+local function pluginExists(name)
+  return pluginExistsInUserdir(name)
+      or util.fileExists(DATADIR .. '/plugins/' .. name)
+      or util.fileExists(DATADIR .. '/plugins/' .. name .. '.lua')
 end
 
 -- ---------------------------------------------------------------------------
@@ -70,12 +115,21 @@ function M.linkLocalRepo(repo)
 
   local config = require 'core.config'
   for _, addon in ipairs(manifest.addons) do
-    if addon.id ~= 'use_package' and config.plugins[addon.id] ~= false then
+    if addon.id == 'use_package' then
+      if addon.version and util.compareVersions(addon.version, M.VERSION) > 0 then
+        local ok, err = installer.linkAddonSync(addon, hex)
+        if ok then
+          core.log('[use-package] upgraded use_package to newer version from repo: %s (built-in was %s)', addon.version, M.VERSION)
+        else
+          core.error('[use-package] failed to link newer use_package: %s', err or '?')
+        end
+      end
+    elseif config.plugins[addon.id] ~= false then
       local stored = store.getPlugin(addon.id)
       local is_disabled = (stored and stored.enabled == false and config.plugins[addon.id] ~= true)
       if not is_disabled then
         local file_name = addon.path and (addon.path:match('[^\\/]+$') or addon.id) or addon.id
-        if not pluginExists(file_name) then
+        if not pluginExistsInUserdir(file_name) then
           local ok, err = installer.linkAddonSync(addon, hex)
           if ok then
             store.addPlugin({
@@ -354,6 +408,20 @@ end
 -- ---------------------------------------------------------------------------
 function M.update()
   core.add_thread(function()
+    -- Check if any repo provides a newer version of use_package itself
+    local up_addon, up_hex = manifestlib.searchAddon('use_package', nil, _repos)
+    if up_addon and up_addon.version and util.compareVersions(up_addon.version, M.VERSION) > 0 then
+      local repo_url = util.dehexify(up_hex)
+      if util.isLocalPath(repo_url) then
+        local ok, err = installer.linkAddonSync(up_addon, up_hex)
+        if ok then
+          core.log('[use-package] updated use_package to %s from %s', up_addon.version, repo_url)
+        else
+          core.error('[use-package] failed to update use_package: %s', err or '?')
+        end
+      end
+    end
+
     for _, spec in ipairs(_plugins) do
       if spec.enabled ~= false then
         local name   = spec.name
@@ -523,5 +591,100 @@ command.add(nil, {
     })
   end,
 })
+
+-- ---------------------------------------------------------------------------
+-- autoStartup — handle auto_install and auto_update on startup
+-- ---------------------------------------------------------------------------
+local _auto_startup_running = false
+
+function M.autoStartup()
+  if _auto_startup_running then return end
+  core.add_thread(function()
+    coroutine.yield()   -- wait for init.lua and initial plugin loading to settle
+
+    local auto_install = config.plugins.use_package.auto_install
+    local auto_update  = config.plugins.use_package.auto_update
+    if not auto_install and not auto_update then return end
+
+    _auto_startup_running = true
+
+    -- Update repos if auto_update is enabled, or download if missing and auto_install is enabled
+    for _, repo in ipairs(_repos) do
+      local url = util.repoURL(repo)
+      if not util.isLocalPath(url) then
+        if auto_update then
+          manifestlib.updateRepo(repo)
+        elseif auto_install then
+          manifestlib.downloadRepo(repo)
+        end
+      end
+    end
+
+    -- Check if use_package itself can be upgraded from repos
+    if auto_update then
+      local up_addon, up_hex = manifestlib.searchAddon('use_package', nil, _repos)
+      if up_addon and up_addon.version and util.compareVersions(up_addon.version, M.VERSION) > 0 then
+        local repo_url = util.dehexify(up_hex)
+        if util.isLocalPath(repo_url) then
+          local ok, err = installer.linkAddonSync(up_addon, up_hex)
+          if ok then
+            core.log('[use-package] auto-updated use_package to %s from %s', up_addon.version, repo_url)
+          else
+            core.error('[use-package] failed to auto-update use_package: %s', err or '?')
+          end
+        end
+      end
+    end
+
+    -- Process declared plugins
+    for _, spec in ipairs(_plugins) do
+      if spec.enabled ~= false then
+        local name = spec.name
+        local exists = pluginExists(name)
+
+        if not exists and auto_install then
+          core.log('[use-package] auto-installing missing plugin: %s', name)
+          if spec.dependencies then
+            for _, dep in ipairs(spec.dependencies) do
+              local dspec = type(dep) == 'string' and {plugin=dep} or dep
+              dspec.name  = dspec.name or util.plugName(dspec.plugin)
+              if not pluginExists(dspec.name) then
+                M.installSingle(dspec)
+              end
+            end
+          end
+          M.installSingle(spec)
+        elseif exists and auto_update then
+          local stored = store.getPlugin(spec.plugin)
+          if stored then
+            local method = stored.installMethod or detectMethod(spec)
+            local function onDone(already)
+              if not already then
+                core.log('[use-package] auto-updated %s', name)
+                spec.fullyInstalled = true
+                spec.installMethod  = method
+                store.addPlugin(spec)
+              end
+            end
+            local function onFail(err)
+              core.error('[use-package] auto-update failed for %s: %s', name, err or '?')
+            end
+
+            if method == 'repo' then
+              installer.updateRepo(spec):done(onDone):fail(onFail)
+            elseif method == 'git' then
+              installer.updateGit(spec):done(onDone):fail(onFail)
+            end
+          end
+        end
+      end
+    end
+
+    _auto_startup_running = false
+  end)
+end
+
+-- Schedule autoStartup on module load
+M.autoStartup()
 
 return M
